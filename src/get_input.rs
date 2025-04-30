@@ -5,7 +5,7 @@ use std::path::Path;
 use walkdir::WalkDir;
 use anyhow::{Result, Context, anyhow};
 
-pub fn get_expected_input(mut input_content: HashMap<String, String>, input_file: &Path) -> Result<()> {
+pub fn get_expected_input(input_content: &mut HashMap<String, String>, input_file: &Path) -> Result<()> {
     if input_file.exists() && input_file.is_file() {
         if input_file.extension().map_or(false, |ext| ext == "txt") {
             let input_context = fs::read_to_string(input_file)
@@ -33,7 +33,7 @@ pub fn get_expected_input(mut input_content: HashMap<String, String>, input_file
 }
 
 
-pub fn get_expected_output(mut output_content: HashMap<String, Vec<String>>, output_file: &Path) -> Result<()> {
+pub fn get_expected_output(output_content: &mut HashMap<String, Vec<String>>, output_file: &Path) -> Result<()> {
    if output_file.exists() && output_file.is_file() {
        if output_file.extension().map_or(false, |ext| ext == "txt") {
            let mut output_vec: Vec<String> = Vec::new();

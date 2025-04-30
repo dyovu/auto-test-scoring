@@ -22,7 +22,6 @@ struct TestResult {
 }
 
 fn main() -> Result<()> {
-
     // 実行ディレクトリの直下に現在時刻のファイル名のCSVを作成
     let timestamp = Local::now().format("%Y-%m-%d_%H-%M-%S").to_string();
     let csv_path = timestamp + ".csv";
@@ -54,15 +53,14 @@ fn main() -> Result<()> {
     let mut input_file = String::new();
     io::stdin().read_line(&mut input_file)?;
     let input_file = Path::new(input_file.trim());
-    get_expected_input(input_contents, input_file).context("インプットファイルの読み込みに失敗しました")?;
-
+    get_expected_input(&mut input_contents, input_file).context("インプットファイルの読み込みに失敗しました")?;
 
 
     println!("想定される出力のファイルのあるフォルダもしくは1つのテキストファイル(ex : output.txt)を入力してください");
     let mut output_file = String::new();
     io::stdin().read_line(&mut output_file)?;
     let output_file = Path::new(output_file.trim());
-    get_expected_output(output_contents, output_file).context("アウトプットファイルの読み込みに失敗しました")?;
+    get_expected_output(&mut output_contents, output_file).context("アウトプットファイルの読み込みに失敗しました")?;
 
     
     println!("フォルダ内のPythonファイルをテストします: {:?}", folder_path);
@@ -114,20 +112,23 @@ fn main() -> Result<()> {
 
 
 
-
-fn test_python_file(file_path: &Path, input: HashMap<String, String>, expected_output: HashMap<String, Vec<String>>) -> Result<(String, String)> {
-    // Python実行コマンドを作成
-    let mut command = Command::new("python");
-    command
-        .arg(file_path)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+// 処理自体（この関数の実行自体）が成功したら、
+// 期待される出力と実行結果を比較して、一致か不一致かのstatusを返す
+// さらに不一致の場合はその詳細について返す
+fn test_python_file(file_path: &Path, input: &HashMap<String, String>, expected_output: &HashMap<String, Vec<String>>) -> Result<(String, String),  anyhow::Error> {
     
-    let mut child = command.spawn().context("Pythonプロセスの実行に失敗しました")?;
-
+    let mut result = true;
+    let mut detail = String::new();
 
     for (i, input) in input.iter() {
+        // Python実行コマンドを作成
+        let mut command = Command::new("python");
+        command
+            .arg(file_path)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let mut child = command.spawn().context("Pythonプロセスの実行に失敗しました")?;
         if let Some(mut stdin) = child.stdin.take() {
             stdin.write_all(input.as_bytes()).context("標準入力の書き込みに失敗しました")?;
         }
@@ -136,25 +137,36 @@ fn test_python_file(file_path: &Path, input: HashMap<String, String>, expected_o
         let output = child.wait_with_output().context("Pythonプロセスの実行結果の取得に失敗しました")?;
         
         // 標準出力と標準エラーを取得
-        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout: String = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let stderr: String = String::from_utf8_lossy(&output.stderr).trim().to_string();
+
+        let stdout:Vec<String> = stdout.lines().map(|line| line.to_string()).collect::<Vec<String>>();
+        let expected_stdout: &Vec<String> = expected_output.get(i).ok_or_else(|| anyhow!("期待される標準出力例が見つかりません"))?;
         
         // 実行結果と期待される出力を比較
-        if stdout == expected_output.trim() {
-            Ok(("PASS".to_string(), "".to_string()))
-        } else {
-            // 失敗時はエラー詳細を含む
-            let error_message = if !stderr.is_empty() {
-                stderr
-            } else {
-                format!("期待された出力: '{}', 実際の出力: '{}'", expected_output.trim(), stdout)
-            };
-            
-            Ok(("FAIL".to_string(), error_message))
-        }
+        // ここで実行数を変えることでcheckのゆるさや厳しさを調整するようにする
+        (result, detail) = complete_match(stdout, &expected_stdout);
     }
 
-    Ok((""))
+    println!("  実行結果: {}, 詳細 {}", result, detail);
+
+    if result {
+        return Ok(("PASS".to_string(), "".to_string()));
+    } else {
+        return Ok(("FAIL".to_string(), detail));
+    }
+}
 
 
+// 完全一致かどうかを判定する
+fn complete_match(stdout:Vec<String>, expected_stdout:&Vec<String>) -> (bool, String) {
+    if stdout.len() != expected_stdout.len() {
+        return (false, format!("行数が一致しません: 実行結果の行数: {}, 期待される出力の行数: {}", stdout.len(), expected_stdout.len()));
+    }
+    for (i, line) in stdout.iter().enumerate() {
+        if line.trim() != expected_stdout[i].trim() {
+            return (false, format!("行 {} が一致しません: 実行結果: '{}', 期待される出力: '{}'", i + 1, line, expected_stdout[i]));
+        }
+    }
+    return (true, "".to_string())
 }
